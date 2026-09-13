@@ -1,0 +1,118 @@
+diff --git a/geyser/src/main/java/me/zimzaza4/geyserutils/geyser/GeyserUtils.java b/geyser/src/main/java/me/zimzaza4/geyserutils/geyser/GeyserUtils.java
+index 7b40298..5420508 100644
+--- a/geyser/src/main/java/me/zimzaza4/geyserutils/geyser/GeyserUtils.java
++++ b/geyser/src/main/java/me/zimzaza4/geyserutils/geyser/GeyserUtils.java
+@@ -501,10 +501,20 @@ public class GeyserUtils implements Extension {
+                 return;
+             }
+ 
++            Entity bindEntity = session.getEntityCache().getEntityByJavaId(formData.bindEntity());
++            if (bindEntity == null) {
++                logger().warning("Cannot open NPC dialogue: Java entity ID " + formData.bindEntity()
++                        + " is not present in the Geyser session entity cache");
++                session.sendDownstreamPacket(ReflectionUtils.buildServerboundPayloadPacket(
++                        GeyserUtilsChannels.MAIN,
++                        packetManager.encodePacket(new NpcFormResponseCustomPayloadPacket(formData.formId(), -1))));
++                return;
++            }
++
+             NpcDialogueForm form = new NpcDialogueForm();
+             form.title(formData.title())
+                     .dialogue(formData.dialogue())
+-                    .bindEntity(session.getEntityCache().getEntityByJavaId(formData.bindEntity()))
++                    .bindEntity(bindEntity)
+                     .hasNextForm(formData.hasNextForm());
+ 
+             if (formData.skinData() != null) {
+diff --git a/geyser/src/main/java/me/zimzaza4/geyserutils/geyser/translator/NPCFormResponseTranslator.java b/geyser/src/main/java/me/zimzaza4/geyserutils/geyser/translator/NPCFormResponseTranslator.java
+index d87ba5d..dd2deaf 100644
+--- a/geyser/src/main/java/me/zimzaza4/geyserutils/geyser/translator/NPCFormResponseTranslator.java
++++ b/geyser/src/main/java/me/zimzaza4/geyserutils/geyser/translator/NPCFormResponseTranslator.java
+@@ -30,7 +30,13 @@ public class NPCFormResponseTranslator extends PacketTranslator<NpcRequestPacket
+         }
+ 
+ 
+-        Button button = form.dialogueButtons().get(packet.getActionType());
++        int actionType = packet.getActionType();
++        if (actionType < 0 || actionType >= form.dialogueButtons().size()) {
++            form.close(geyserSession);
++            return;
++        }
++
++        Button button = form.dialogueButtons().get(actionType);
+ 
+         if (button == null) {
+             return;
+diff --git a/spigot/src/main/java/me/zimzaza4/geyserutils/spigot/api/form/NpcDialogueForm.java b/spigot/src/main/java/me/zimzaza4/geyserutils/spigot/api/form/NpcDialogueForm.java
+index e908c0c..b57f7af 100644
+--- a/spigot/src/main/java/me/zimzaza4/geyserutils/spigot/api/form/NpcDialogueForm.java
++++ b/spigot/src/main/java/me/zimzaza4/geyserutils/spigot/api/form/NpcDialogueForm.java
+@@ -1,6 +1,5 @@
+ package me.zimzaza4.geyserutils.spigot.api.form;
+ 
+-import lombok.AllArgsConstructor;
+ import lombok.Getter;
+ import lombok.NoArgsConstructor;
+ import lombok.Setter;
+@@ -23,7 +22,6 @@ import java.util.function.BiConsumer;
+ import java.util.function.Consumer;
+ 
+ @NoArgsConstructor
+-@AllArgsConstructor
+ @Setter
+ @Getter
+ @Accessors(fluent = true)
+@@ -35,11 +33,40 @@ public class NpcDialogueForm {
+     String dialogue;
+     String skinData;
+     Entity bindEntity;
++    int bindEntityId = -1;
+     boolean hasNextForm = false;
+     List<NpcDialogueButton> buttons;
+     BiConsumer<String, Integer> handler;
+     Consumer<String> closeHandler;
+ 
++    public NpcDialogueForm(String title, String dialogue, String skinData, Entity bindEntity,
++                           boolean hasNextForm, List<NpcDialogueButton> buttons,
++                           BiConsumer<String, Integer> handler, Consumer<String> closeHandler) {
++        this.title = title;
++        this.dialogue = dialogue;
++        this.skinData = skinData;
++        this.bindEntity(bindEntity);
++        this.hasNextForm = hasNextForm;
++        this.buttons = buttons;
++        this.handler = handler;
++        this.closeHandler = closeHandler;
++    }
++
++    public NpcDialogueForm bindEntity(Entity bindEntity) {
++        this.bindEntity = bindEntity;
++        this.bindEntityId = bindEntity == null ? -1 : bindEntity.getEntityId();
++        return this;
++    }
++
++    public NpcDialogueForm bindEntityId(int javaEntityId) {
++        if (javaEntityId < 0) {
++            throw new IllegalArgumentException("Java entity ID must not be negative");
++        }
++        this.bindEntity = null;
++        this.bindEntityId = javaEntityId;
++        return this;
++    }
++
+     public static void closeForm(FloodgatePlayer floodgatePlayer) {
+         NpcDialogueFormDataCustomPayloadPacket data = new NpcDialogueFormDataCustomPayloadPacket(null, null, null, null, -1, null, "CLOSE", false);
+         Player p = Bukkit.getPlayer(floodgatePlayer.getCorrectUniqueId());
+@@ -49,8 +76,11 @@ public class NpcDialogueForm {
+     }
+ 
+     public void send(FloodgatePlayer floodgatePlayer) {
++        if (bindEntityId < 0) {
++            throw new IllegalStateException("An entity or Java entity ID must be bound before sending an NPC dialogue");
++        }
+         UUID formId = UUID.randomUUID();
+-        NpcDialogueFormDataCustomPayloadPacket data = new NpcDialogueFormDataCustomPayloadPacket(formId.toString(), title, dialogue, skinData, bindEntity.getEntityId(), buttons, "OPEN", hasNextForm);
++        NpcDialogueFormDataCustomPayloadPacket data = new NpcDialogueFormDataCustomPayloadPacket(formId.toString(), title, dialogue, skinData, bindEntityId, buttons, "OPEN", hasNextForm);
+         Player p = Bukkit.getPlayer(floodgatePlayer.getCorrectUniqueId());
+         if (p != null) {
+ 
