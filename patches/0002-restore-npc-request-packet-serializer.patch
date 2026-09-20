@@ -1,0 +1,125 @@
+diff --git a/geyser/src/main/java/me/zimzaza4/geyserutils/geyser/GeyserUtils.java b/geyser/src/main/java/me/zimzaza4/geyserutils/geyser/GeyserUtils.java
+index 5420508..0f38f05 100644
+--- a/geyser/src/main/java/me/zimzaza4/geyserutils/geyser/GeyserUtils.java
++++ b/geyser/src/main/java/me/zimzaza4/geyserutils/geyser/GeyserUtils.java
+@@ -16,6 +16,7 @@ import me.zimzaza4.geyserutils.common.packet.*;
+ import me.zimzaza4.geyserutils.geyser.form.NpcDialogueForm;
+ import me.zimzaza4.geyserutils.geyser.form.NpcDialogueForms;
+ import me.zimzaza4.geyserutils.geyser.form.element.Button;
++import me.zimzaza4.geyserutils.geyser.compat.NpcRequestCodecCompat;
+ import me.zimzaza4.geyserutils.geyser.replace.JavaAddEntityTranslatorReplace;
+ import me.zimzaza4.geyserutils.geyser.translator.NPCFormResponseTranslator;
+ import me.zimzaza4.geyserutils.geyser.util.Converter;
+@@ -32,6 +33,7 @@ import org.geysermc.geyser.GeyserImpl;
+ import org.geysermc.geyser.api.bedrock.camera.CameraShake;
+ import org.geysermc.geyser.api.connection.GeyserConnection;
+ import org.geysermc.geyser.api.event.bedrock.SessionDisconnectEvent;
++import org.geysermc.geyser.api.event.bedrock.SessionInitializeEvent;
+ import org.geysermc.geyser.api.event.bedrock.SessionLoginEvent;
+ import org.geysermc.geyser.api.event.lifecycle.GeyserDefineCommandsEvent;
+ import org.geysermc.geyser.api.event.lifecycle.GeyserDefineEntityPropertiesEvent;
+@@ -363,6 +365,11 @@ public class GeyserUtils implements Extension {
+         // MountFix.start();
+     }
+ 
++    @Subscribe
++    public void onSessionInitialize(SessionInitializeEvent event) {
++        NpcRequestCodecCompat.install((GeyserSession) event.connection());
++    }
++
+ 
+     @Subscribe
+     public void onDefineProperties(GeyserDefineEntityPropertiesEvent event) {
+diff --git a/geyser/src/main/java/me/zimzaza4/geyserutils/geyser/compat/NpcRequestCodecCompat.java b/geyser/src/main/java/me/zimzaza4/geyserutils/geyser/compat/NpcRequestCodecCompat.java
+new file mode 100644
+index 0000000..d99eebc
+--- /dev/null
++++ b/geyser/src/main/java/me/zimzaza4/geyserutils/geyser/compat/NpcRequestCodecCompat.java
+@@ -0,0 +1,59 @@
++package me.zimzaza4.geyserutils.geyser.compat;
++
++import io.netty.buffer.ByteBuf;
++import me.zimzaza4.geyserutils.geyser.GeyserUtils;
++import org.cloudburstmc.protocol.bedrock.BedrockServerSession;
++import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
++import org.cloudburstmc.protocol.bedrock.codec.BedrockCodecHelper;
++import org.cloudburstmc.protocol.bedrock.codec.BedrockPacketDefinition;
++import org.cloudburstmc.protocol.bedrock.codec.BedrockPacketSerializer;
++import org.cloudburstmc.protocol.bedrock.codec.v448.serializer.NpcRequestSerializer_v448;
++import org.cloudburstmc.protocol.bedrock.data.PacketRecipient;
++import org.cloudburstmc.protocol.bedrock.packet.NpcRequestPacket;
++import org.geysermc.geyser.session.GeyserSession;
++
++/**
++ * Restores the vanilla NPC request decoder that Geyser replaces with its illegal-packet serializer.
++ */
++public final class NpcRequestCodecCompat {
++    private static final BedrockPacketSerializer<NpcRequestPacket> NPC_REQUEST_SERIALIZER =
++            new NpcRequestSerializer_v448() {
++                @Override
++                public void deserialize(ByteBuf buffer, BedrockCodecHelper helper, NpcRequestPacket packet) {
++                    super.deserialize(buffer, helper, packet);
++                    GeyserUtils extension = GeyserUtils.getInstance();
++                    if (extension != null) {
++                        extension.logger().info(
++                                "Decoded NpcRequestPacket: runtimeEntityId=" + packet.getRuntimeEntityId()
++                                        + ", requestType=" + packet.getRequestType()
++                                        + ", command=" + packet.getCommand()
++                                        + ", actionType=" + packet.getActionType()
++                                        + ", sceneName=" + packet.getSceneName());
++                    }
++                }
++            };
++
++    private NpcRequestCodecCompat() {
++    }
++
++    public static void install(GeyserSession session) {
++        BedrockServerSession upstream = session.getUpstream().getSession();
++        BedrockCodec codec = upstream.getCodec();
++        BedrockPacketDefinition<NpcRequestPacket> definition = codec.getPacketDefinition(NpcRequestPacket.class);
++
++        if (definition == null || definition.getRecipient() != PacketRecipient.SERVER) {
++            GeyserUtils.getInstance().logger().warning(
++                    "Cannot enable native NPC dialogue responses for Bedrock protocol "
++                            + codec.getProtocolVersion() + ": NpcRequestPacket has no serverbound definition");
++            return;
++        }
++
++        upstream.setCodec(patchCodec(codec));
++    }
++
++    static BedrockCodec patchCodec(BedrockCodec codec) {
++        return codec.toBuilder()
++                .updateSerializer(NpcRequestPacket.class, NPC_REQUEST_SERIALIZER)
++                .build();
++    }
++}
+diff --git a/geyser/src/main/java/me/zimzaza4/geyserutils/geyser/translator/NPCFormResponseTranslator.java b/geyser/src/main/java/me/zimzaza4/geyserutils/geyser/translator/NPCFormResponseTranslator.java
+index dd2deaf..35a3c18 100644
+--- a/geyser/src/main/java/me/zimzaza4/geyserutils/geyser/translator/NPCFormResponseTranslator.java
++++ b/geyser/src/main/java/me/zimzaza4/geyserutils/geyser/translator/NPCFormResponseTranslator.java
+@@ -1,6 +1,7 @@
+ package me.zimzaza4.geyserutils.geyser.translator;
+ 
+ import me.zimzaza4.geyserutils.common.form.element.NpcDialogueButton;
++import me.zimzaza4.geyserutils.geyser.GeyserUtils;
+ import me.zimzaza4.geyserutils.geyser.form.NpcDialogueForm;
+ import me.zimzaza4.geyserutils.geyser.form.NpcDialogueForms;
+ import me.zimzaza4.geyserutils.geyser.form.element.Button;
+@@ -13,6 +14,15 @@ public class NPCFormResponseTranslator extends PacketTranslator<NpcRequestPacket
+ 
+     @Override
+     public void translate(GeyserSession geyserSession, NpcRequestPacket packet) {
++        GeyserUtils extension = GeyserUtils.getInstance();
++        if (extension != null) {
++            extension.logger().info(
++                    "NPCFormResponseTranslator invoked: runtimeEntityId=" + packet.getRuntimeEntityId()
++                            + ", requestType=" + packet.getRequestType()
++                            + ", command=" + packet.getCommand()
++                            + ", actionType=" + packet.getActionType()
++                            + ", sceneName=" + packet.getSceneName());
++        }
+ 
+         // System.out.println(packet);
+         NpcDialogueForm form = NpcDialogueForms.getOpenNpcDialogueForms(geyserSession);

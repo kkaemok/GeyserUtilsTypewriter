@@ -10,7 +10,7 @@ The Java branch deliberately has no BetterHUD dependency. Connect it to your exi
 
 ## Build
 
-The checked-in `libs/geyserutils-spigot-1.0-SNAPSHOT.jar` is compiled from GeyserUtils commit `0539202` with `patches/0001-add-java-entity-id-npc-dialogue-binding.patch` applied.
+The checked-in GeyserUtils artifacts are compiled from GeyserUtils commit `0539202` with both patches in `patches/` applied. Patch `0001` adds direct Java entity-ID binding. Patch `0002` restores the real `NpcRequestPacket` decoder for each Bedrock session so native NPC responses reach GeyserUtils on Geyser `2.9.4-b1081`.
 
 ```powershell
 .\gradlew.bat clean build
@@ -42,13 +42,16 @@ Apply the separate patch at the root of a GeyserUtils checkout:
 
 ```powershell
 git apply C:\path\to\GeyserUtilsTypewriter\patches\0001-add-java-entity-id-npc-dialogue-binding.patch
+git apply C:\path\to\GeyserUtilsTypewriter\patches\0002-restore-npc-request-packet-serializer.patch
 mvn -DskipTests -pl spigot -am package
 mvn -DskipTests -pl geyser -am package
 ```
 
 Deploy `spigot/target/geyserutils-spigot-1.0-SNAPSHOT.jar` to the Paper server's `plugins/` directory. Deploy `geyser/target/geyserutils-geyser-1.0-SNAPSHOT.jar` to the `extensions/` directory of the Geyser instance that handles the player. Keep the existing GeyserUtils Velocity bridge in Velocity's `plugins/` directory when using its proxy topology.
 
-The patch changes only the Spigot `NpcDialogueForm`, the Geyser custom-payload handler, and the native NPC response translator. The common payload and Velocity bridge are unchanged. The payload continues to carry a Java entity ID; no Bedrock runtime ID crosses the Paper/GeyserUtils plugin-message boundary.
+Patch `0001` changes only the Spigot `NpcDialogueForm`, the Geyser custom-payload handler, and the native NPC response translator. Patch `0002` replaces only the per-session `NpcRequestPacket` serializer after Geyser selects its processed Bedrock codec. All other illegal-packet protection remains active. The common payload and Velocity bridge are unchanged. The payload continues to carry a Java entity ID; no Bedrock runtime ID crosses the Paper/GeyserUtils plugin-message boundary.
+
+The patched Geyser extension temporarily logs the decoded NPC request fields and confirms entry into `NPCFormResponseTranslator`. These two targeted log lines can be removed after live server confirmation.
 
 ## Example graph
 
