@@ -6,7 +6,7 @@ A standalone Typewriter `0.9.0-beta-177` extension providing:
 - native Bedrock NPC dialogue through GeyserUtils;
 - native Bedrock NPC option dialogue through GeyserUtils.
 
-The Java branch deliberately has no BetterHUD dependency. Connect it to your existing BetterHUD Spoken dialogue in the Typewriter editor.
+May have bugs, will later try not using GeyserUtils
 
 ## Build
 
